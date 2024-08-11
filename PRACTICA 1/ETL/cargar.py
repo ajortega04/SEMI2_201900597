@@ -1,13 +1,7 @@
 import pandas as pd
 from conexion.conexion import get_connection
 
-def cargar_info(datos):
-
-    # Limpiar datos duplicados y nulos
-    # datos = datos = datos.drop_duplicates(subset=['Passenger ID']).copy()
-    # datos_b = datos.drop_duplicates(subset=['Airport Name', 'Airport Country Code']).copy()
-    # datos = datos[datos['Arrival Airport'].notna() & (datos['Arrival Airport'] != "0")]
-    
+def cargar_info(datos):    
     cargar_pasajeros(datos) 
     cargar_aeropuerto(datos)
     cargar_vuelos(datos)
@@ -52,12 +46,10 @@ def cargar_aeropuerto(datos):
         if airport_key not in existing_airports:
             cursor.execute("""
                 INSERT INTO AIRPORTS (
-                    AirportName, AirportCountry, CountryName, AirportContinent, Continents
-                )
+                    AirportName, AirportCountry, CountryName, AirportContinent, Continents)
                 VALUES (?, ?, ?, ?, ?)
                 """, 
-                row['Airport Name'], row['Airport Country Code'], 
-                row['Country Name'], row['Airport Continent'], row['Continents']
+                row['Airport Name'], row['Airport Country Code'], row['Country Name'], row['Airport Continent'], row['Continents']
             )
             # Agregar el nuevo aeropuerto al conjunto existente
             existing_airports.add(airport_key)
@@ -68,21 +60,63 @@ def cargar_aeropuerto(datos):
 def cargar_vuelos(datos):
     conexion = get_connection()
     cursor = conexion.cursor()
+    
     for index, row in datos.iterrows():
+        if row['Arrival Airport'] != '0':
+            cursor.execute("""
+                INSERT INTO FLIGHTS (DepartureDate, ArrivalAirport, PilotName, FlightStatus)
+                VALUES (?, ?, ?, ?)
+                """, 
+                row['Departure Date'], row['Arrival Airport'], row['Pilot Name'], row['Flight Status']
+            )
+
+    conexion.commit()
+    cursor.close()
+    conexion.close()
+
+def cargar_pasajero_aeropuerto(datos):
+    conexion = get_connection()
+    cursor = conexion.cursor()
+    
+    for index, row in datos.iterrows():
+        # Verificar que el PassengerID existe en la tabla PASSENGERS
         cursor.execute("""
-            IF NOT EXISTS (SELECT 1 FROM FLIGHTS 
-                            WHERE DepartureDate = ? 
-                              AND ArrivalAirport = ? 
-                              AND PilotName = ? 
-                              AND PassengerID = ?)
-            BEGIN
-                INSERT INTO FLIGHTS (DepartureDate, ArrivalAirport, PilotName, FlightStatus, PassengerID, AirportName)
-                VALUES (?, ?, ?, ?, ?, ?)
-            END
+            SELECT COUNT(*)
+            FROM PASSENGERS
+            WHERE PassengerID = ?
+            """, row['Passenger ID'])
+        passenger_exists = cursor.fetchone()[0]
+        
+        # Obtener el AirportID basado en AirportName y AirportCountry
+        cursor.execute("""
+            SELECT AirportID
+            FROM AIRPORTS
+            WHERE AirportName = ? AND AirportCountry = ?
+            """, row['Airport Name'], row['Airport Country Code'])
+        airport_id = cursor.fetchone()
+        
+        # Obtener el FlightID basado en los detalles del vuelo
+        cursor.execute("""
+            SELECT FlightID
+            FROM FLIGHTS
+            WHERE DepartureDate = ? AND ArrivalAirport = ? AND PilotName = ? AND FlightStatus = ?
             """, 
-            row['Departure Date'], row['Arrival Airport'], row['Pilot Name'], row['Passenger ID'], 
-            row['Departure Date'], row['Arrival Airport'], row['Pilot Name'], row['Flight Status'], row['Passenger ID'], row['Airport Name']
-        )
+            row['Departure Date'], row['Arrival Airport'], row['Pilot Name'], row['Flight Status'])
+        flight_id = cursor.fetchone()
+        
+        # Si se encuentran el pasajero y el vuelo, y se ha encontrado un AirportID correspondiente
+        if passenger_exists and airport_id is not None and flight_id is not None:
+            airport_id = airport_id[0]  # Obtener el AirportID del resultado de la consulta
+            flight_id = flight_id[0]    # Obtener el FlightID del resultado de la consulta
+            
+            # Insertar en la tabla FACT_FLIGHT_DETAILS si no existe
+            cursor.execute("""
+                INSERT INTO FACT_FLIGHT_DETAILS (PassengerID, AirportID, FlightID)
+                VALUES (?, ?, ?)
+                """, 
+                row['Passenger ID'], airport_id, flight_id
+            )
+    
     conexion.commit()
     cursor.close()
     conexion.close()
